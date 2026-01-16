@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 import os
 from mantik import akilli_makas
+from mantik.ai_model import get_model
 
 def otomatik_duzelt(goruntu_yolu: str, maske_pil: Image.Image) -> Image.Image:
     """
@@ -59,4 +60,34 @@ def otomatik_duzelt(goruntu_yolu: str, maske_pil: Image.Image) -> Image.Image:
         traceback.print_exc()
         return maske_pil
 
+
+def ai_segmentasyon(goruntu_yolu: str) -> tuple[Image.Image, bool, str]:
+    """
+    AI model kullanarak otomatik segmentasyon yapar.
+    
+    Args:
+        goruntu_yolu: Görüntü dosyasının tam yolu
+        
+    Returns:
+        (maske, basarili, mesaj) tuple
+        - maske: PIL Image (L mode) binary mask veya None
+        - basarili: Segmentasyon başarılı mı?
+        - mesaj: Bilgi/hata mesajı
+    """
+    try:
+        # AI modelini al
+        model = get_model()
+        
+        if model is None:
+            return None, False, "AI Model yüklenmemiş"
+        
+        # Segmentasyon yap
+        mask_image, is_valid, message = model.segment(goruntu_yolu)
+        
+        return mask_image, is_valid, message
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None, False, f"AI segmentasyon hatası: {e}"
 

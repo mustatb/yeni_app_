@@ -7,4 +7,5 @@ opencv-python
 scikit-image
 torch
 torchvision
-segment-anything
+segmentation-models-pytorch
+pydicom

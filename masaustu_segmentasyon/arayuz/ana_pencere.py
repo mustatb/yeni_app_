@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from arayuz.segmentasyon_alani import SegmentasyonAlani
 from mantik import dosya_yonetimi, maske_islemleri, otomatik_segmentasyon
+from mantik.ai_model import load_model
 
 
 
@@ -92,6 +93,10 @@ class AnaPencere(QMainWindow):
         # Renk Paleti Durumu
         self.custom_color = QColor(128, 128, 128) # Başlangıç gri
         self.color_buttons = []
+        
+        # AI Model yükleme
+        self.ai_model = None
+        self._yukle_ai_model()
         
         # Arayüzü kur
         self.arayuzu_olustur()
@@ -323,13 +328,17 @@ class AnaPencere(QMainWindow):
             QMessageBox.warning(self, "Hata", f"Görüntü yüklenemedi veya format desteklenmiyor:\n{dosya_adi}")
             return
         
-        # Varsa maskeyi yükle
+        # Varsa kayıtlı maskeyi yükle, yoksa AI segmentasyon yap
         maske_yolu = dosya_yonetimi.maske_yolunu_olustur(self.aktif_klasor, dosya_adi)
         if dosya_yonetimi.maske_var_mi(maske_yolu):
+            # Kayıtlı maske var, onu yükle
             maske = maske_islemleri.maske_yukle(maske_yolu)
             self.segmentasyon_alani.maske_yukle(maske)
+            self.statusBar().showMessage(f"Kayıtlı maske yüklendi: {dosya_adi}", 2000)
         else:
+            # Kayıtlı maske yok, AI segmentasyon yap
             self.segmentasyon_alani.maske_temizle()
+            self._ai_otomatik_segmentasyon(tam_yol)
 
     def onceki_goruntu(self):
         if self.aktif_dosya_indeksi > 0:
@@ -466,3 +475,76 @@ class AnaPencere(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Hata", f"Otomatik segmentasyon sırasında hata oluştu:\n{e}")
             self.statusBar().showMessage("Hata oluştu.")
+    
+    def _yukle_ai_model(self):
+        """
+        AI modelini yükler (uygulama başlangıcında).
+        """
+        try:
+            # Model dosyası yolu: yeni_app klasöründe
+            model_dosyasi = "calcaneus_ultimate_model.pth"
+            
+            # Ana uygulama dizinini bul (masaustu_segmentasyon)
+            app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            model_yolu = os.path.join(app_dir, model_dosyasi)
+            
+            if not os.path.exists(model_yolu):
+                print(f"UYARI: AI Model dosyası bulunamadı: {model_yolu}")
+                print("AI segmentasyon özelliği devre dışı.")
+                return
+            
+            # Status bar'da bilgi ver
+            if hasattr(self, 'statusBar'):
+                self.statusBar().showMessage("AI Model yükleniyor...", 5000)
+            
+            print(f"AI Model yükleniyor: {model_yolu}")
+            
+            # Modeli yükle
+            self.ai_model = load_model(model_yolu)
+            
+            print("✓ AI Model başarıyla yüklendi ve hazır.")
+            if hasattr(self, 'statusBar'):
+                self.statusBar().showMessage("AI Model hazır.", 3000)
+                
+        except Exception as e:
+            print(f"AI Model yüklenirken hata oluştu: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Kullanıcıya bilgi ver
+            if hasattr(self, 'statusBar'):
+                self.statusBar().showMessage("AI Model yüklenemedi. Manuel segmentasyon modu.", 5000)
+    
+    def _ai_otomatik_segmentasyon(self, goruntu_yolu: str):
+        """
+        Görüntü için AI otomatik segmentasyon yapar.
+        
+        Args:
+            goruntu_yolu: Görüntü dosyasının tam yolu
+        """
+        if self.ai_model is None:
+            # Model yüklenmemişse sessizce atla
+            return
+        
+        try:
+            # Status bar güncelle
+            self.statusBar().showMessage("AI segmentasyonu yapılıyor...", 0)
+            QApplication.processEvents()
+            
+            # AI segmentasyon yap
+            maske, basarili, mesaj = otomatik_segmentasyon.ai_segmentasyon(goruntu_yolu)
+            
+            if basarili and maske is not None:
+                # Başarılı, maskeyi yükle
+                self.segmentasyon_alani.maske_yukle(maske)
+                self.statusBar().showMessage(f"AI segmentasyonu tamamlandı: {mesaj}", 3000)
+            else:
+                # Başarısız veya validasyon geçmedi
+                self.statusBar().showMessage(f"AI segmentasyonu: {mesaj}", 4000)
+                # Boş maske bırak, kullanıcı manuel çizebilir
+                
+        except Exception as e:
+            print(f"AI segmentasyon hatası: {e}")
+            import traceback
+            traceback.print_exc()
+            self.statusBar().showMessage("AI segmentasyon hatası.", 3000)
