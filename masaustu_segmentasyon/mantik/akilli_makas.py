@@ -29,34 +29,63 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         mask[kaba_maske_np > 0] = cv2.GC_PR_FGD
         
         # Kesin Ön Plan (Sure Foreground) - Erozyon ile
-        # Maskenin iç kısmını (kenarlardan uzak) kesin kemik olarak işaretle
-        kernel_erode = np.ones((10, 10), np.uint8)
-        sure_fg = cv2.erode(kaba_maske_np, kernel_erode, iterations=2)
-        mask[sure_fg > 0] = cv2.GC_FGD # 1
+        # 2a. Maske/ROI Boyut Analizi
+        h, w = kaba_maske_np.shape[:2]
+        diag = np.sqrt(h**2 + w**2)
         
-        # Kesin Arka Plan (Sure Background) - Dilation ile
-        # Maskenin çok dışını kesin arka plan olarak işaretle
-        
-        # Strateji: Kalkaneusun üst kısmı (Talus tarafı) için daha kısıtlı bir alan (tight),
-        # alt ve arka kısımlar için daha geniş bir alan (loose) kullanalım.
-        # Bu sayede üst tarafta talusa "sıçrama" yapması engellenir.
-        
-        # 1. Maskenin merkezini bul
+        # 2b. Maskenin merkezini bul (Erken hesaplama gerekli)
         y_ind, x_ind = np.where(kaba_maske_np > 0)
         if len(y_ind) > 0:
             y_min, y_max = np.min(y_ind), np.max(y_ind)
             y_center = (y_min + y_max) // 2
         else:
             y_center = kaba_maske_np.shape[0] // 2
-
-        # 2. Geniş (Loose) Dilation - Alt ve Arka taraf için (Mevcut ayarlar)
-        kernel_loose = np.ones((20, 20), np.uint8)
-        sure_bg_loose = cv2.dilate(kaba_maske_np, kernel_loose, iterations=3)
         
-        # 3. Dar (Tight) Dilation - Üst taraf için (Daha az iterasyon/küçük kernel)
-        # 10x10 kernel ve 2 iterasyon ~10px genişleme sağlar (Loose ~30px idi)
-        kernel_tight = np.ones((10, 10), np.uint8)
-        sure_bg_tight = cv2.dilate(kaba_maske_np, kernel_tight, iterations=2)
+        # Adaptif Kernel Boyutları
+        # Erozyon (Sure Foreground) için çok küçük bir değer kullanıyoruz ki
+        # kullanıcının çizdiği sınıra (kırmızı çizgi) olabildiğince güvenelim.
+        erode_size = max(3, int(diag * 0.005)) # Örn: 1000px için 5px
+        kernel_erode = np.ones((erode_size, erode_size), np.uint8)
+        
+        # Dilation (Sure Background) - Loose
+        dilate_loose_size = max(5, int(diag * 0.03)) # Örn: 1000px için 30px
+        kernel_loose = np.ones((dilate_loose_size, dilate_loose_size), np.uint8)
+        
+        # Dilation (Sure Background) - Tight (Üst taraf için)
+        dilate_tight_size = max(3, int(diag * 0.01)) # Örn: 1000px için 10px
+        kernel_tight = np.ones((dilate_tight_size, dilate_tight_size), np.uint8)
+
+        # 3. Kesin Ön Plan (Sure Foreground) - Erozyon ile
+        # Maskenin iç kısmını kesin kemik olarak işaretle
+        
+        # Strateji: Alt tarafta (Plantar yüzey) kullanıcının çizdiği çizgiye tam sadık kalmak istiyoruz.
+        # Bu yüzden alt tarafta erozyon yapmayacağız veya çok az yapacağız.
+        # Üst tarafta (Talus) ise erozyon yaparak algoritmanın oturtmasına izin vereceğiz.
+        
+        full_eroded = cv2.erode(kaba_maske_np, kernel_erode, iterations=1)
+        
+        sure_fg = full_eroded.copy()
+        
+        # Alt yarıda (y > y_center) erozyonu iptal et -> Kullanıcının çizdiği tam maskeyi kullan
+        # Bu sayede alt sınır "Sure Foreground" olarak işaretlenir ve GrabCut burayı kesemez.
+        sure_fg[y_center:, :] = kaba_maske_np[y_center:, :]
+
+        mask[sure_fg > 0] = cv2.GC_FGD # 1
+        
+        # 4. Kesin Arka Plan (Sure Background) - Dilation ile
+        # Maskenin çok dışını kesin arka plan olarak işaretle
+        
+        # Strateji: Kalkaneusun üst kısmı (Talus tarafı) için daha kısıtlı bir alan (tight),
+        # alt ve arka kısımlar için daha geniş bir alan (loose) kullanalım.
+        # Bu sayede üst tarafta talusa "sıçrama" yapması engellenir.
+        
+        # 4a. Maskenin merkezi zaten hesaplandı (y_center)
+
+        # 4b. Geniş (Loose) Dilation - Alt ve Arka taraf için
+        sure_bg_loose = cv2.dilate(kaba_maske_np, kernel_loose, iterations=1)
+        
+        # 4c. Dar (Tight) Dilation - Üst taraf için
+        sure_bg_tight = cv2.dilate(kaba_maske_np, kernel_tight, iterations=1)
         
         # 4. Maskeleri Birleştir
         sure_bg_area = sure_bg_loose.copy()
