@@ -3,21 +3,35 @@ import cv2
 
 def konturu_iyilestir(img_np, kaba_maske_np):
     """
-    Optimized GrabCut - 3px erosion ile kenar iyileştirme.
+    Enhanced GrabCut - CLAHE ile kontrast artırma.
     
     Strateji:
-    1. Kullanıcının çizimi doğru kabul edilir.
+    1. Üst kısma CLAHE uygula (zayıf kenarları güçlendir).
     2. 3px erosion ile 'Kesin Ön Plan' belirlenir.
     3. 7px dilation ile 'Kesin Arka Plan' belirlenir.
-    4. Arada kalan dar bölge GrabCut'a verilir (5 iterasyon).
+    4. GrabCut (5 iterasyon) - Artık üstte de kenar bulabilir.
     5. Sonuç pürüzsüzleştirilerek döndürülür.
     """
     try:
         # 1. Görüntü Hazırlığı
+        # Üst kısımda (düşük kontrast) CLAHE uygula - kenarları güçlendir
         if len(img_np.shape) == 2:
-            img_bgr = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
+            img_gray = img_np.copy()
         else:
-            img_bgr = img_np
+            img_gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+        
+        # Maskenin merkezini bul
+        y_indices = np.where(kaba_maske_np > 0)[0]
+        if len(y_indices) > 0:
+            y_center = (np.min(y_indices) + np.max(y_indices)) // 2
+        else:
+            y_center = img_gray.shape[0] // 2
+        # CLAHE uygula (tüm görüntüye - kontrast artırma)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        img_enhanced = clahe.apply(img_gray)
+        
+        # BGR'ye çevir (GrabCut için gerekli)
+        img_bgr = cv2.cvtColor(img_enhanced, cv2.COLOR_GRAY2BGR)
             
         # 2. Maske Hazırlığı (Trimap)
         mask = np.zeros(img_np.shape[:2], dtype=np.uint8)
@@ -36,7 +50,7 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         sure_bg = cv2.dilate(kaba_maske_np, kernel_dilate, iterations=1)
         mask[sure_bg == 0] = cv2.GC_BGD  # Kesinlikle arka plan
         
-        # 6. GrabCut - Daha fazla iterasyon (5) - Kenarları daha iyi oturtur
+        # 6. GrabCut (5 iterasyon) - Artık CLAHE sayesinde üstte de kenar bulabilir
         bgdModel = np.zeros((1, 65), np.float64)
         fgdModel = np.zeros((1, 65), np.float64)
         cv2.grabCut(img_bgr, mask, None, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_MASK)
