@@ -282,7 +282,7 @@ class AnaPencere(QMainWindow):
             self.klasoru_yukle(klasor)
 
     def dosya_ac(self):
-        dosya_yolu, _ = QFileDialog.getOpenFileName(self, "Görüntü Dosyası Aç", "", "Görüntüler (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;Tüm Dosyalar (*)")
+        dosya_yolu, _ = QFileDialog.getOpenFileName(self, "Görüntü Dosyası Aç", "", "Tüm Görüntüler (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;PNG Dosyaları (*.png);;JPG Dosyaları (*.jpg *.jpeg);;Tüm Dosyalar (*)")
         if dosya_yolu:
             klasor = os.path.dirname(dosya_yolu)
             dosya_adi = os.path.basename(dosya_yolu)
