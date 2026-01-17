@@ -12,8 +12,7 @@ import shutil
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from arayuz.segmentasyon_alani import SegmentasyonAlani
-from mantik import dosya_yonetimi, maske_islemleri, otomatik_segmentasyon, maske_iyilestirme
-
+from mantik import dosya_yonetimi, maske_islemleri, otomatik_segmentasyon
 from mantik.ai_model import load_model
 
 
@@ -256,12 +255,6 @@ class AnaPencere(QMainWindow):
         self.btn_otomatik.setStyleSheet("background-color: #2a82da; color: white; font-weight: bold;")
         layout_islemler.addWidget(self.btn_otomatik)
         
-        self.btn_maske_duzelt = QPushButton("Maske Düzelt")
-        self.btn_maske_duzelt.clicked.connect(self.maske_duzelt)
-        self.btn_maske_duzelt.setStyleSheet("background-color: #ff9800; color: white; font-weight: bold;")
-        layout_islemler.addWidget(self.btn_maske_duzelt)
-        
-        
         self.btn_geri_al = QPushButton("Geri Al (Undo)")
         self.btn_geri_al.clicked.connect(self.segmentasyon_alani.geri_al)
         layout_islemler.addWidget(self.btn_geri_al)
@@ -470,59 +463,36 @@ class AnaPencere(QMainWindow):
         dosya_adi = os.path.basename(tam_yol)
         klasor = os.path.dirname(tam_yol)
         
-        maske_image = self.segmentasyon_alani.maske_al()
-        if not maske_image:
-            QMessageBox.warning(self, "Uyarı", "Kaydedilecek maske bulunamadı.")
-            return
-        
-        # Kullanıcıdan onay al
-        onay_mesaji = (
-            f"Dosya: {dosya_adi}\n\n"
-            f"Bu görselin maskesini kaydetmek istediğinizden emin misiniz?\n\n"
-            f"Kaydedilecek:\n"
-            f"• Binary maske ({os.path.splitext(dosya_adi)[0]}_mask.png)\n"
-            f"• Overlay görsel ({os.path.splitext(dosya_adi)[0]}_seg.png)"
-        )
-        
-        cevap = QMessageBox.question(
-            self,
-            "Maske Kaydetme Onayı",
-            onay_mesaji,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if cevap != QMessageBox.StandardButton.Yes:
-            return
-        
-        # Kullanıcı onayladı, kaydet
         maske_yolu = dosya_yonetimi.maske_yolunu_olustur(klasor, dosya_adi)
         
         # Overlay için yol oluştur: <dosyaAdi>_seg.png
         isim, uzanti = os.path.splitext(dosya_adi)
-        seg_dosya_adi = f"{isim}_seg.png"  # Her zaman PNG olsun, kullanıcı isteği
+        seg_dosya_adi = f"{isim}_seg.png" # Her zaman PNG olsun, kullanıcı isteği
         seg_yolu = os.path.join(klasor, seg_dosya_adi)
         
         # Orijinal resim yolu
         orijinal_yol = tam_yol
         
-        # 1. Binary Maskeyi Kaydet
-        basari_maske = maske_islemleri.maske_kaydet(maske_image, maske_yolu)
-        
-        # 2. Overlay Görüntüyü Kaydet
-        # Opaklık %40 (0.4)
-        # QColor RGB'dir, OpenCV BGR ister.
-        r = self.segmentasyon_alani.maske_rengi.red()
-        g = self.segmentasyon_alani.maske_rengi.green()
-        b = self.segmentasyon_alani.maske_rengi.blue()
-        
-        basari_seg = maske_islemleri.overlay_kaydet(orijinal_yol, maske_image, seg_yolu, opaklik=self.segmentasyon_alani.maske_opaklik, renk=(b, g, r))
-        
-        if basari_maske and basari_seg:
-            QMessageBox.information(self, "Başarılı", f"Dosyalar başarıyla kaydedildi:\n\n1. {os.path.basename(maske_yolu)}\n2. {os.path.basename(seg_yolu)}")
-        elif basari_maske:
-            QMessageBox.warning(self, "Kısmi Başarı", f"Maske kaydedildi ancak overlay kaydedilemedi.\nMaske: {maske_yolu}")
-        else:
-            QMessageBox.critical(self, "Hata", "Maske kaydedilemedi!")
+        maske_image = self.segmentasyon_alani.maske_al()
+        if maske_image:
+            # 1. Binary Maskeyi Kaydet
+            basari_maske = maske_islemleri.maske_kaydet(maske_image, maske_yolu)
+            
+            # 2. Overlay Görüntüyü Kaydet
+            # Opaklık %40 (0.4)
+            # QColor RGB'dir, OpenCV BGR ister.
+            r = self.segmentasyon_alani.maske_rengi.red()
+            g = self.segmentasyon_alani.maske_rengi.green()
+            b = self.segmentasyon_alani.maske_rengi.blue()
+            
+            basari_seg = maske_islemleri.overlay_kaydet(orijinal_yol, maske_image, seg_yolu, opaklik=self.segmentasyon_alani.maske_opaklik, renk=(b, g, r))
+            
+            if basari_maske and basari_seg:
+                QMessageBox.information(self, "Başarılı", f"Dosyalar başarıyla kaydedildi:\n\n1. {os.path.basename(maske_yolu)}\n2. {os.path.basename(seg_yolu)}")
+            elif basari_maske:
+                QMessageBox.warning(self, "Kısmi Başarı", f"Maske kaydedildi ancak overlay kaydedilemedi.\nMaske: {maske_yolu}")
+            else:
+                QMessageBox.critical(self, "Hata", "Maske kaydedilemedi!")
 
     def maskeyi_temizle(self):
         cevap = QMessageBox.question(self, "Onay", "Maskeyi tamamen temizlemek istediğinize emin misiniz?",
@@ -682,8 +652,14 @@ class AnaPencere(QMainWindow):
         os.makedirs(maskeler_klasoru, exist_ok=True)
         os.makedirs(gorseller_klasoru, exist_ok=True)
         
+        # İlerleme dialog'u oluştur
+        progress = QProgressDialog("Maskeler kaydediliyor...", "İptal", 0, len(self.dosya_listesi), self)
+        progress.setWindowTitle("Toplu Kaydetme")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
         kayit_sayisi = 0
-        atlanan_sayisi = 0
         hata_sayisi = 0
         
         # Mevcut görüntünün indeksini sakla
@@ -691,58 +667,25 @@ class AnaPencere(QMainWindow):
         
         try:
             for idx, dosya_adi in enumerate(self.dosya_listesi):
+                if progress.wasCanceled():
+                    break
+                
                 # dosya_listesi artık tam yol içeriyor
                 tam_yol = dosya_adi
                 dosya_basename = os.path.basename(tam_yol)
                 klasor = os.path.dirname(tam_yol)
                 
-                # Görüntüyü yükle ve göster
-                self.liste_widget.setCurrentRow(idx)
+                progress.setLabelText(f"İşleniyor: {dosya_basename} ({idx + 1}/{len(self.dosya_listesi)})")
+                progress.setValue(idx)
                 QApplication.processEvents()
-                
-                # Kısa bir süre bekle ki UI güncellensin
-                import time
-                time.sleep(0.1)
-                
-                # Her görsel için onay al
-                onay_mesaji = (
-                    f"Görsel {idx + 1} / {len(self.dosya_listesi)}\n\n"
-                    f"Dosya: {dosya_basename}\n\n"
-                    f"Bu görselin maskesini kaydetmek istiyor musunuz?\n\n"
-                    f"• Yes: Kaydet ve devam et\n"
-                    f"• No: Atla ve devam et\n"
-                    f"• Cancel: Toplu kaydetmeyi iptal et"
-                )
-                
-                kullanici_cevap = QMessageBox.question(
-                    self,
-                    "Maske Kaydetme Onayı",
-                    onay_mesaji,
-                    QMessageBox.StandardButton.Yes | 
-                    QMessageBox.StandardButton.No | 
-                    QMessageBox.StandardButton.Cancel
-                )
-                
-                # Cancel - tamamen çık
-                if kullanici_cevap == QMessageBox.StandardButton.Cancel:
-                    break
-                
-                # No - bu görseli atla
-                if kullanici_cevap == QMessageBox.StandardButton.No:
-                    atlanan_sayisi += 1
-                    continue
                 
                 # Maske yolunu kontrol et
                 maske_yolu = dosya_yonetimi.maske_yolunu_olustur(klasor, dosya_basename)
                 
-                # Maskeyi al (varsa dosyadan, yoksa mevcut segmentasyondan)
-                maske_image = None
-                
-                if dosya_yonetimi.maske_var_mi(maske_yolu):
-                    # Kayıtlı maske var, dosyadan oku
-                    maske_image = maske_islemleri.maske_yukle(maske_yolu)
-                else:
-                    # Maske yoksa, görüntüyü yükle ve mevcut segmentasyonu al
+                # Eğer maske yoksa, bu görüntüyü atla
+                if not dosya_yonetimi.maske_var_mi(maske_yolu):
+                    # Maske yoksa AI segmentasyon yap
+                    # Görüntüyü yükle
                     self.liste_widget.setCurrentRow(idx)
                     QApplication.processEvents()
                     
@@ -750,26 +693,28 @@ class AnaPencere(QMainWindow):
                     import time
                     time.sleep(0.1)
                     
-                    # Mevcut maskeyi al
+                    # Şimdi maskeyi kontrol et
                     maske_image = self.segmentasyon_alani.maske_al()
-                
-                # Maske kontrolü
-                if not maske_image:
-                    hata_sayisi += 1
-                    continue
+                    if not maske_image:
+                        hata_sayisi += 1
+                        continue
+                    
+                    # Maskeyi geçici olarak kaydet
+                    maske_islemleri.maske_kaydet(maske_image, maske_yolu)
                 
                 # Hedef dosya adlarını oluştur (0001, 0002, ...)
                 numara = f"{idx + 1:04d}"
                 
-                # Maske hedef yolu (sadece Desktop klasörüne kaydet)
+                # Maske hedef yolu
                 maske_hedef = os.path.join(maskeler_klasoru, f"{numara}_mask.png")
                 
                 # Görsel hedef yolu
                 gorsel_hedef = os.path.join(gorseller_klasoru, f"{numara}.png")
                 
                 try:
-                    # Maskeyi direkt Desktop'a kaydet (orijinal klasöre DOKUNMA)
-                    maske_islemleri.maske_kaydet(maske_image, maske_hedef)
+                    # Maskeyi kopyala
+                    if os.path.exists(maske_yolu):
+                        shutil.copy2(maske_yolu, maske_hedef)
                     
                     # Orijinal görseli kopyala
                     if os.path.exists(tam_yol):
@@ -780,7 +725,8 @@ class AnaPencere(QMainWindow):
                 except Exception as e:
                     print(f"Hata ({dosya_adi}): {e}")
                     hata_sayisi += 1
-
+            
+            progress.setValue(len(self.dosya_listesi))
             
         finally:
             # Orijinal görüntüye geri dön
@@ -788,73 +734,20 @@ class AnaPencere(QMainWindow):
                 self.liste_widget.setCurrentRow(mevcut_indeks)
         
         # Sonuç mesajı
-        if kayit_sayisi > 0 or atlanan_sayisi > 0:
+        if kayit_sayisi > 0:
             QMessageBox.information(
                 self, 
-                "Toplu Kaydetme Tamamlandı",
-                f"İşlem tamamlandı!\n\n"
+                "Başarılı",
+                f"Toplu kaydetme tamamlandı!\n\n"
                 f"✓ Kaydedilen: {kayit_sayisi}\n"
-                f"○ Atlanan: {atlanan_sayisi}\n"
                 f"✗ Hata: {hata_sayisi}\n\n"
                 f"Klasörler:\n"
                 f"• {maskeler_klasoru}\n"
                 f"• {gorseller_klasoru}"
             )
         else:
-            QMessageBox.information(
+            QMessageBox.warning(
                 self,
-                "İşlem İptal Edildi",
-                "Toplu kaydetme işlemi iptal edildi."
+                "Uyarı",
+                "Hiçbir dosya kaydedilemedi. Lütfen maskelerin oluşturulduğundan emin olun."
             )
-
-    def maske_duzelt(self):
-        """
-        Mevcut maskenin kenarlarını düzleştirir ve pixelated görünümü giderir.
-        """
-        if self.aktif_dosya_indeksi == -1:
-            self.statusBar().showMessage("Lütfen önce bir görüntü seçin.", 3000)
-            return
-        
-        # Mevcut maskeyi al
-        mevcut_maske = self.segmentasyon_alani.maske_al()
-        if not mevcut_maske:
-            self.statusBar().showMessage("Düzeltilecek maske bulunamadı.", 3000)
-            return
-        
-        try:
-            # İşlem başlıyor
-            self.statusBar().showMessage("Maske kenarları düzeltiliyor...", 0)
-            QApplication.processEvents()
-            
-            # Maske iyileştirme uygula (geliştirilmiş parametreler)
-            iyilestirilmis_maske = maske_iyilestirme.smooth_mask_contours(
-                mevcut_maske,
-                epsilon_factor=0.002,  # Daha agresif smoothing
-                morph_kernel_size=7    # Daha büyük kernel = daha smooth kenarlar
-            )
-            
-            # Değişiklik kontrolü
-            import numpy as np
-            eski_np = np.array(mevcut_maske)
-            yeni_np = np.array(iyilestirilmis_maske)
-            
-            fark = np.sum(eski_np != yeni_np)
-            
-            if fark == 0:
-                self.statusBar().showMessage("Maske zaten düzgün görünüyor.", 5000)
-            else:
-                # Değişiklik var, uygula
-                self.segmentasyon_alani.durumu_kaydet()  # Undo için kaydet
-                self.segmentasyon_alani.maske_yukle(iyilestirilmis_maske)
-                
-                # Bilgilendirme mesajı
-                degisim_yuzde = (fark / eski_np.size) * 100
-                self.statusBar().showMessage(
-                    f"✓ Maske düzeltildi! Değişen piksel: {degisim_yuzde:.2f}% (Geri Al ile eski haline dönebilirsiniz)", 
-                    8000
-                )
-                
-        except Exception as e:
-            self.statusBar().showMessage(f"Hata: {str(e)}", 5000)
-            import traceback
-            traceback.print_exc()

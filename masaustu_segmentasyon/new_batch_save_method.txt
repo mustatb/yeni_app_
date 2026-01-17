@@ -1,0 +1,154 @@
+    def maskeleri_toplu_kaydet(self):
+        """
+        Tüm yüklenen görsellerin maskelerini ve görsellerini masaüstüne kaydeder.
+        Her görsel için kullanıcıdan onay ister.
+        Maskeler: Desktop/maskeler/0001_mask.png, 0002_mask.png, ...
+        Görseller: Desktop/görseller/0001.png, 0002.png, ...
+        """
+        if not self.dosya_listesi:
+            QMessageBox.warning(self, "Uyarı", "Kaydetmek için görüntü yüklenmiş olmalı.")
+            return
+        
+        # İlk onay - toplu kaydetme başlasın mı?
+        cevap = QMessageBox.question(
+            self, 
+            "Toplu Kaydetme Onayı",
+            f"{len(self.dosya_listesi)} adet görüntü için toplu kaydetme başlatıls\u0131n mı?\n\nHer görsel için ayrı ayrı onay istenecektir.\n\nKlasörler:\n• Desktop/maskeler/\n• Desktop/görseller/",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if cevap != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Masaüstü yolunu al
+        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+        
+        # Hedef klasörleri oluştur
+        maskeler_klasoru = os.path.join(desktop_path, "maskeler")
+        gorseller_klasoru = os.path.join(desktop_path, "görseller")
+        
+        os.makedirs(maskeler_klasoru, exist_ok=True)
+        os.makedirs(gorseller_klasoru, exist_ok=True)
+        
+        kayit_sayisi = 0
+        atlanan_sayisi = 0
+        hata_sayisi = 0
+        
+        # Mevcut görüntünün indeksini sakla
+        mevcut_indeks = self.aktif_dosya_indeksi
+        
+        try:
+            for idx, dosya_adi in enumerate(self.dosya_listesi):
+                # dosya_listesi artık tam yol içeriyor
+                tam_yol = dosya_adi
+                dosya_basename = os.path.basename(tam_yol)
+                klasor = os.path.dirname(tam_yol)
+                
+                # Görüntüyü yükle ve göster
+                self.liste_widget.setCurrentRow(idx)
+                QApplication.processEvents()
+                
+                # Kısa bir süre bekle ki UI güncellensin
+                import time
+                time.sleep(0.1)
+                
+                # Her görsel için onay al
+                onay_mesaji = (
+                    f"Görsel {idx + 1} / {len(self.dosya_listesi)}\n\n"
+                    f"Dosya: {dosya_basename}\n\n"
+                    f"Bu görselin maskesini kaydetmek istiyor musunuz?\n\n"
+                    f"• Yes: Kaydet ve devam et\n"
+                    f"• No: Atla ve devam et\n"
+                    f"• Cancel: Toplu kaydetmeyi iptal et"
+                )
+                
+                kullanici_cevap = QMessageBox.question(
+                    self,
+                    "Maske Kaydetme Onayı",
+                    onay_mesaji,
+                    QMessageBox.StandardButton.Yes | 
+                    QMessageBox.StandardButton.No | 
+                    QMessageBox.StandardButton.Cancel
+                )
+                
+                # Cancel - tamamen çık
+                if kullanici_cevap == QMessageBox.StandardButton.Cancel:
+                    break
+                
+                # No - bu görseli atla
+                if kullanici_cevap == QMessageBox.StandardButton.No:
+                    atlanan_sayisi += 1
+                    continue
+                
+                # Yes - kaydet
+                # Maske yolunu kontrol et
+                maske_yolu = dosya_yonetimi.maske_yolunu_olustur(klasor, dosya_basename)
+                
+                # Eğer maske yoksa, mevcut segmentasyon alanından al
+                if not dosya_yonetimi.maske_var_mi(maske_yolu):
+                    maske_image = self.segmentasyon_alani.maske_al()
+                    if not maske_image:
+                        hata_sayisi += 1
+                        QMessageBox.warning(
+                            self,
+                            "Uyarı",
+                            f"'{dosya_basename}' için maske bulunamadı."
+                        )
+                        continue
+                    
+                    # Maskeyi geçici olarak kaydet
+                    maske_islemleri.maske_kaydet(maske_image, maske_yolu)
+                
+                # Hedef dosya adlarını oluştur (sadece kaydedilenler için numara)
+                numara = f"{kayit_sayisi + 1:04d}"
+                
+                # Maske hedef yolu
+                maske_hedef = os.path.join(maskeler_klasoru, f"{numara}_mask.png")
+                
+                # Görsel hedef yolu
+                gorsel_hedef = os.path.join(gorseller_klasoru, f"{numara}.png")
+                
+                try:
+                    # Maskeyi kopyala
+                    if os.path.exists(maske_yolu):
+                        shutil.copy2(maske_yolu, maske_hedef)
+                    
+                    # Orijinal görseli kopyala
+                    if os.path.exists(tam_yol):
+                        shutil.copy2(tam_yol, gorsel_hedef)
+                    
+                    kayit_sayisi += 1
+                    
+                except Exception as e:
+                    print(f"Hata ({dosya_basename}): {e}")
+                    hata_sayisi += 1
+                    QMessageBox.warning(
+                        self,
+                        "Hata",
+                        f"'{dosya_basename}' kaydedilirken hata:\n{e}"
+                    )
+            
+        finally:
+            # Orijinal görüntüye geri dön
+            if mevcut_indeks >= 0:
+                self.liste_widget.setCurrentRow(mevcut_indeks)
+        
+        # Sonuç mesajı
+        if kayit_sayisi > 0 or atlanan_sayisi > 0:
+            QMessageBox.information(
+                self, 
+                "Toplu Kaydetme Tamamlandı",
+                f"İşlem tamamlandı!\n\n"
+                f"✓ Kaydedilen: {kayit_sayisi}\n"
+                f"○ Atlanan: {atlanan_sayisi}\n"
+                f"✗ Hata: {hata_sayisi}\n\n"
+                f"Klasörler:\n"
+                f"• {maskeler_klasoru}\n"
+                f"• {gorseller_klasoru}"
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "İşlem İptal Edildi",
+                "Toplu kaydetme işlemi iptal edildi."
+            )

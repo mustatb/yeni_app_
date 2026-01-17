@@ -1,126 +1,6 @@
 import numpy as np
 import cv2
 
-def posterior_siniri_duzelt(maske_np):
-    """
-    Topuğun posterior (arka) sınırındaki yanlış iç kıvrımları düzeltir.
-    
-    Convexity defects (dışbükeylik kusurları) kullanarak, sadece görüntünün
-    sağ tarafında (posterior bölge) bulunan ve belirli bir derinlikten büyük
-    olan kusurları hedefler ve düzeltir.
-    
-    Args:
-        maske_np: uint8 formatında ikili maske (binary mask)
-    
-    Returns:
-        Düzeltilmiş ikili maske
-    """
-    try:
-        # Adım 1: En büyük dış konturu bul
-        contours, _ = cv2.findContours(maske_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:
-            return maske_np
-        
-        # En büyük konturu seç (kemik konturu)
-        main_contour = max(contours, key=cv2.contourArea)
-        
-        # Adım 2: Convex Hull (dışbükey örtü) hesapla
-        hull_indices = cv2.convexHull(main_contour, returnPoints=False)
-        
-        if hull_indices is None or len(hull_indices) < 3:
-            return maske_np
-        
-        # Adım 3: Convexity Defects (dışbükeylik kusurları) hesapla
-        defects = cv2.convexityDefects(main_contour, hull_indices)
-        
-        if defects is None:
-            return maske_np
-        
-        # Adım 4: Görüntü boyutlarını al (posterior bölge tespiti için)
-        h, w = maske_np.shape
-        
-        # Adım 5: Posterior (sağ taraf) kusurlağarını filtrele
-        # Kritik: Sadece görüntünün sağ yarısında (x > w/2) ve derin olan kusurları hedefle
-        posterior_defects = []
-        
-        for i in range(defects.shape[0]):
-            s, e, f, d = defects[i, 0]
-            
-            # s: başlangıç noktası, e: bitiş noktası, f: en uzak nokta, d: derinlik
-            start = tuple(main_contour[s][0])
-            end = tuple(main_contour[e][0])
-            far = tuple(main_contour[f][0])
-            depth = d / 256.0  # Piksel cinsinden derinlik
-            
-            # Filtreleme kriterleri:
-            # 1. Kusurun merkezi görüntünün sağ yarısında mı? (posterior bölge)
-            # 2. Derinlik yeterince büyük mü? (> 20 piksel)
-            defect_center_x = (start[0] + end[0] + far[0]) / 3.0
-            
-            is_posterior = defect_center_x > w * 0.6  # Sağ %40'lık bölge
-            is_deep = depth > 20  # 20 pikselden derin kusurlar
-            
-            if is_posterior and is_deep:
-                posterior_defects.append({
-                    'start': start,
-                    'end': end,
-                    'far': far,
-                    'depth': depth,
-                    'start_idx': s,
-                    'end_idx': e
-                })
-        
-        # Adım 6: Eğer posterior kusur yoksa, orijinal maskeyi döndür
-        if not posterior_defects:
-            return maske_np
-        
-        # Adım 7: Kusurları düzelt (en derin olanı ile başla)
-        # En derin kusuru bul
-        deepest_defect = max(posterior_defects, key=lambda x: x['depth'])
-        
-        # Yeni maske oluştur (orijinalin kopyası)
-        duzeltilmis_maske = maske_np.copy()
-        
-        # Adım 8: Kusurun başlangıç ve bitiş noktaları arasını doldur
-        # Kontur üzerindeki başlangıç ve bitiş indeksleri arasındaki yolu çiz
-        start_idx = deepest_defect['start_idx']
-        end_idx = deepest_defect['end_idx']
-        
-        # Convex hull üzerindeki kısa yolu bul (düz çizgi)
-        # Bu, kusuru kapatacak en kısa yol
-        hull_points = cv2.convexHull(main_contour)
-        
-        # Kusuru kapatmak için başlangıç ve bitiş noktalarını birleştir
-        # Bu bölgeyi fill etmek yerine, sadece kontur çizgisini ekle
-        cv2.line(duzeltilmis_maske, 
-                 deepest_defect['start'], 
-                 deepest_defect['end'], 
-                 255, 
-                 thickness=3)
-        
-        # Opsiyonel: Küçük delikleri kapat (flood fill)
-        # Konturun içini tamamen doldurmak için
-        filled_maske = duzeltilmis_maske.copy()
-        cv2.floodFill(filled_maske, None, deepest_defect['far'], 255)
-        
-        # Son dokunuş: Konturu yeniden çiz (düzgün kenarlar için)
-        contours_final, _ = cv2.findContours(filled_maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if contours_final:
-            final_contour = max(contours_final, key=cv2.contourArea)
-            yeni_maske = np.zeros_like(maske_np)
-            cv2.drawContours(yeni_maske, [final_contour], -1, 255, thickness=2)
-            return yeni_maske
-        
-        return duzeltilmis_maske
-        
-    except Exception as e:
-        print(f"Posterior sınır düzeltme hatası: {e}")
-        import traceback
-        traceback.print_exc()
-        return maske_np
-
-
 def konturu_iyilestir(img_np, kaba_maske_np):
     """
     Enhanced GrabCut - Morphological Gradient + CLAHE.
@@ -159,7 +39,10 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         else:
             roi_img_gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
         
-        # 3. Çok Güçlü Kenar Güçlendirme (Multi-stage)
+        # 3. Bölgesel Kenar Güçlendirme (Region-aware Edge Enhancement)
+        # Posterior-alt: Edge ağırlığı ↑ (düşük kontrast)
+        # Üst: Intensity ağırlığı ↑ (iyi kontrast)
+        
         # Aşama 1: Bilateral filter (gürültü azalt, kenarları koru)
         roi_img_filtered = cv2.bilateralFilter(roi_img_gray, d=9, sigmaColor=75, sigmaSpace=75)
         
@@ -176,8 +59,19 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         # Aşama 4: Sobel ve Morph gradient'i birleştir
         combined_edges = cv2.addWeighted(sobel_combined, 0.5, morph_gradient, 0.5, 0)
         
-        # Aşama 5: Kenarları orijinal görüntüye ekle (çok güçlü)
-        roi_img_boosted = cv2.addWeighted(roi_img_filtered, 0.6, combined_edges, 0.4, 0)
+        # Aşama 5: Bölgesel Ağırlıklandırma
+        # Posterior-alt bölge: Edge ağırlığı artır (%80)
+        # Üst bölge: Normal ağırlık (%40)
+        roi_h, roi_w = roi_img_gray.shape
+        y_mid_roi = roi_h // 2
+        x_mid_roi = roi_w // 2
+        
+        edge_weight_map = np.ones_like(roi_img_gray, dtype=np.float32) * 0.4
+        edge_weight_map[y_mid_roi:, x_mid_roi:] = 0.8  # Posterior-alt: Yüksek edge weight
+        
+        # Weighted edge blending
+        weighted_edges = (combined_edges.astype(float) * edge_weight_map).astype(np.uint8)
+        roi_img_boosted = cv2.addWeighted(roi_img_filtered, 0.6, weighted_edges, 0.4, 0)
         
         # Aşama 6: Çok güçlü CLAHE
         clahe = cv2.createCLAHE(clipLimit=10.0, tileGridSize=(4,4))
@@ -190,32 +84,24 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         mask = np.zeros(roi_img.shape[:2], dtype=np.uint8)
         mask.fill(cv2.GC_PR_BGD)
         
-        # 4. Spatial-Aware Erosion - Bölgeye göre farklı strateji
-        # Üst-sağ bölge (zayıf kenarlar): EROSION YOK
-        # Diğer bölgeler: 2px erosion
+        # 4. Erosion - Posterior HARİÇ
+        # KRITIK: Posterior bölgede (üst-sağ) erosion YAPMA
+        # GrabCut'un posterior'da gradient'leri takip etmesine izin ver
         
         h_roi, w_roi = roi_mask.shape
         y_mid = h_roi // 2
         x_mid = w_roi // 2
         
-        # Üst-sağ quadrant mask (zayıf kenar bölgesi)
-        top_right_mask = roi_mask.copy()
-        top_right_mask[y_mid:, :] = 0  # Alt yarıyı sıfırla
-        top_right_mask[:, :x_mid] = 0  # Sol yarıyı sıfırla
+        # Posterior OLMAYAN bölgelere erosion
+        non_posterior_mask = roi_mask.copy()
+        non_posterior_mask[:y_mid, x_mid:] = 0  # Üst-sağı (posterior) sıfırla
         
-        # Diğer bölgeler mask
-        other_areas_mask = roi_mask.copy()
-        other_areas_mask[:y_mid, x_mid:] = 0  # Üst-sağı sıfırla
-        
-        # Üst-sağ: Erosion YOK (direkt Sure FG)
+        # Non-posterior bölgeler: 2px erosion
         sure_fg = np.zeros_like(roi_mask)
-        sure_fg[top_right_mask > 0] = 255
-        
-        # Diğer bölgeler: 2px erosion
-        if np.sum(other_areas_mask) > 0:
+        if np.sum(non_posterior_mask) > 0:
             kernel_erode = np.ones((2, 2), np.uint8)
-            eroded_other = cv2.erode(other_areas_mask, kernel_erode, iterations=1)
-            sure_fg[eroded_other > 0] = 255
+            eroded = cv2.erode(non_posterior_mask, kernel_erode, iterations=1)
+            sure_fg[eroded > 0] = 255
         
         mask[sure_fg > 0] = cv2.GC_FGD
         
@@ -235,13 +121,13 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         else:
             y_center = roi_mask.shape[0] // 2
         
-        # Loose dilation (alt taraf)
-        kernel_loose = np.ones((15, 15), np.uint8)
-        sure_bg_loose = cv2.dilate(roi_mask, kernel_loose, iterations=2)
+        # Loose dilation (alt taraf) - Eski koddan: 20x20, 3 iter
+        kernel_loose = np.ones((20, 20), np.uint8)
+        sure_bg_loose = cv2.dilate(roi_mask, kernel_loose, iterations=3)
         
-        # Tight dilation (üst taraf - Talus bölgesi)
-        kernel_tight = np.ones((7, 7), np.uint8)
-        sure_bg_tight = cv2.dilate(roi_mask, kernel_tight, iterations=1)
+        # Tight dilation (üst taraf - Talus bölgesi) - Eski koddan: 10x10, 2 iter
+        kernel_tight = np.ones((10, 10), np.uint8)
+        sure_bg_tight = cv2.dilate(roi_mask, kernel_tight, iterations=2)
         
         # Birleştir: Üst kısımda tight, alt kısımda loose
         sure_bg = sure_bg_loose.copy()
@@ -249,10 +135,10 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         
         mask[sure_bg == 0] = cv2.GC_BGD
         
-        # 7. GrabCut (3 iterasyon)
+        # 7. GrabCut (Eski koddan: 5 iterasyon daha iyi sonuç veriyor)
         bgdModel = np.zeros((1, 65), np.float64)
         fgdModel = np.zeros((1, 65), np.float64)
-        cv2.grabCut(roi_img_bgr, mask, None, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_MASK)
+        cv2.grabCut(roi_img_bgr, mask, None, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_MASK)
         
         # 8. Sonucu İşle
         mask2 = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0).astype('uint8')
@@ -283,10 +169,6 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         # 10. Tam boyutta maske oluştur
         yeni_maske = np.zeros_like(kaba_maske_np)
         cv2.drawContours(yeni_maske, [approx_contour], -1, 255, thickness=2)
-        
-        # 11. Posterior Sınır Düzeltmesi
-        # Topuğun arka tarafındaki yanlış iç kıvrımları düzelt
-        yeni_maske = posterior_siniri_duzelt(yeni_maske)
         
         return yeni_maske
         
