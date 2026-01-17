@@ -3,13 +3,13 @@ import cv2
 
 def konturu_iyilestir(img_np, kaba_maske_np):
     """
-    Optimized GrabCut - Kullanıcı çizimlerine tam güven.
+    Optimized GrabCut - 3px erosion ile kenar iyileştirme.
     
     Strateji:
-    1. Kullanıcının tüm çizimi (AI + manuel) doğru kabul edilir.
-    2. Erosion YOK - İnce manuel eklemeler korunur.
-    3. Dilation ile 'Kesin Arka Plan' belirlenir.
-    4. GrabCut sadece dar bir kenarda çalışır.
+    1. Kullanıcının çizimi doğru kabul edilir.
+    2. 3px erosion ile 'Kesin Ön Plan' belirlenir.
+    3. 7px dilation ile 'Kesin Arka Plan' belirlenir.
+    4. Arada kalan dar bölge GrabCut'a verilir (5 iterasyon).
     5. Sonuç pürüzsüzleştirilerek döndürülür.
     """
     try:
@@ -23,13 +23,15 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         mask = np.zeros(img_np.shape[:2], dtype=np.uint8)
         mask.fill(cv2.GC_PR_BGD)  # Varsayılan: Muhtemel arka plan
         
-        # 3. Sure Foreground - EROSION YOK
-        # Kullanıcının çizdiği her şey (AI + manuel düzeltmeler) kesin doğru
-        # Özellikle ince manuel çizimler erosion'da kaybolmasın diye
-        mask[kaba_maske_np > 0] = cv2.GC_FGD  # Tüm maske = Kesinlikle ön plan
+        # 3. Sure Foreground - Erosion (3px, 1 iter)
+        kernel_erode = np.ones((3, 3), np.uint8)
+        sure_fg = cv2.erode(kaba_maske_np, kernel_erode, iterations=1)
+        mask[sure_fg > 0] = cv2.GC_FGD  # Kesinlikle ön plan
         
-        # 4. Sure Background - Dilation (7px, 1 iter)
-        # Sadece maskenin dışını işaretle
+        # 4. Probable Foreground - Kullanıcının maskesi
+        mask[kaba_maske_np > 0] = cv2.GC_PR_FGD  # Muhtemelen ön plan
+        
+        # 5. Sure Background - Dilation (7px, 1 iter)
         kernel_dilate = np.ones((7, 7), np.uint8)
         sure_bg = cv2.dilate(kaba_maske_np, kernel_dilate, iterations=1)
         mask[sure_bg == 0] = cv2.GC_BGD  # Kesinlikle arka plan
