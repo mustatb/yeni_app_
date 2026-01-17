@@ -70,20 +70,44 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         mask = np.zeros(roi_img.shape[:2], dtype=np.uint8)
         mask.fill(cv2.GC_PR_BGD)
         
-        # 4. Sure Foreground - Erosion (3px, 1 iter)
-        kernel_erode = np.ones((3, 3), np.uint8)
-        sure_fg = cv2.erode(roi_mask, kernel_erode, iterations=1)
+        # 4. Spatial-Aware Erosion - Bölgeye göre farklı strateji
+        # Üst-sağ bölge (zayıf kenarlar): EROSION YOK
+        # Diğer bölgeler: 2px erosion
+        
+        h_roi, w_roi = roi_mask.shape
+        y_mid = h_roi // 2
+        x_mid = w_roi // 2
+        
+        # Üst-sağ quadrant mask (zayıf kenar bölgesi)
+        top_right_mask = roi_mask.copy()
+        top_right_mask[y_mid:, :] = 0  # Alt yarıyı sıfırla
+        top_right_mask[:, :x_mid] = 0  # Sol yarıyı sıfırla
+        
+        # Diğer bölgeler mask
+        other_areas_mask = roi_mask.copy()
+        other_areas_mask[:y_mid, x_mid:] = 0  # Üst-sağı sıfırla
+        
+        # Üst-sağ: Erosion YOK (direkt Sure FG)
+        sure_fg = np.zeros_like(roi_mask)
+        sure_fg[top_right_mask > 0] = 255
+        
+        # Diğer bölgeler: 2px erosion
+        if np.sum(other_areas_mask) > 0:
+            kernel_erode = np.ones((2, 2), np.uint8)
+            eroded_other = cv2.erode(other_areas_mask, kernel_erode, iterations=1)
+            sure_fg[eroded_other > 0] = 255
+        
         mask[sure_fg > 0] = cv2.GC_FGD
         
         # 5. Probable Foreground
         mask[roi_mask > 0] = cv2.GC_PR_FGD
         
-        # 6. Sure Background - Dilation (7px, 1 iter)
+        # 6. Sure Background - Dilation (7px)
         kernel_dilate = np.ones((7, 7), np.uint8)
         sure_bg = cv2.dilate(roi_mask, kernel_dilate, iterations=1)
         mask[sure_bg == 0] = cv2.GC_BGD
         
-        # 7. GrabCut (3 iterasyon - hız için azaltıldı, CLAHE sayesinde yeter)
+        # 7. GrabCut (3 iterasyon)
         bgdModel = np.zeros((1, 65), np.float64)
         fgdModel = np.zeros((1, 65), np.float64)
         cv2.grabCut(roi_img_bgr, mask, None, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_MASK)
