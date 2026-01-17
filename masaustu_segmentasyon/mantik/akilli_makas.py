@@ -3,14 +3,14 @@ import cv2
 
 def konturu_iyilestir(img_np, kaba_maske_np):
     """
-    Enhanced GrabCut - Optimize edilmiş CLAHE ile kontrast artırma.
+    Enhanced GrabCut - Morphological Gradient + CLAHE.
     
     Strateji:
-    1. Sadece ROI'ye güçlü CLAHE uygula (hız + etkinlik).
+    1. Sadece ROI'ye morphological gradient + güçlü CLAHE (kenar oluşturma).
     2. 3px erosion ile 'Kesin Ön Plan' belirlenir.
     3. 7px dilation ile 'Kesin Arka Plan' belirlenir.
-    4. GrabCut (3 iterasyon - hız için azaltıldı).
-    5. Sonuç pürüzsüzleştirilerek döndürülür.
+    4. GrabCut (3 iterasyon - optimize).
+    5. Bu sayede neredeyse hiç kenarı olmayan bölgelerde bile segmentasyon yapılabilir.
     """
     try:
         # 1. ROI Belirleme (Hız için - sadece ilgili bölgeyi işle)
@@ -33,15 +33,35 @@ def konturu_iyilestir(img_np, kaba_maske_np):
         roi_img = img_np[y_min:y_max, x_min:x_max]
         roi_mask = kaba_maske_np[y_min:y_max, x_min:x_max]
         
-        # 2. CLAHE Uygula (Güçlü - zayıf kenarları belirginleştir)
+        # 2. Görüntüyü griye çevir
         if len(roi_img.shape) == 2:
             roi_img_gray = roi_img.copy()
         else:
             roi_img_gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
         
-        # Daha güçlü CLAHE (clipLimit artırıldı: 3.0 -> 6.0)
-        clahe = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(4,4))
-        roi_img_enhanced = clahe.apply(roi_img_gray)
+        # 3. Çok Güçlü Kenar Güçlendirme (Multi-stage)
+        # Aşama 1: Bilateral filter (gürültü azalt, kenarları koru)
+        roi_img_filtered = cv2.bilateralFilter(roi_img_gray, d=9, sigmaColor=75, sigmaSpace=75)
+        
+        # Aşama 2: Sobel edge detection (X ve Y yönlerinde)
+        sobel_x = cv2.Sobel(roi_img_filtered, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(roi_img_filtered, cv2.CV_64F, 0, 1, ksize=3)
+        sobel_combined = np.sqrt(sobel_x**2 + sobel_y**2)
+        sobel_combined = np.uint8(np.clip(sobel_combined, 0, 255))
+        
+        # Aşama 3: Morphological gradient (yapısal sınırlar)
+        kernel_morph = np.ones((3, 3), np.uint8)
+        morph_gradient = cv2.morphologyEx(roi_img_filtered, cv2.MORPH_GRADIENT, kernel_morph)
+        
+        # Aşama 4: Sobel ve Morph gradient'i birleştir
+        combined_edges = cv2.addWeighted(sobel_combined, 0.5, morph_gradient, 0.5, 0)
+        
+        # Aşama 5: Kenarları orijinal görüntüye ekle (çok güçlü)
+        roi_img_boosted = cv2.addWeighted(roi_img_filtered, 0.6, combined_edges, 0.4, 0)
+        
+        # Aşama 6: Çok güçlü CLAHE
+        clahe = cv2.createCLAHE(clipLimit=10.0, tileGridSize=(4,4))
+        roi_img_enhanced = clahe.apply(roi_img_boosted)
         
         # BGR'ye çevir (GrabCut için gerekli)
         roi_img_bgr = cv2.cvtColor(roi_img_enhanced, cv2.COLOR_GRAY2BGR)
